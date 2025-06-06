@@ -74,7 +74,6 @@ export default function Dashboard() {
                           <th>Project Key</th>
                           <th>Last Issue Updated</th>
                           <th>Project Name</th>
-                          <th>Region</th>
                         </tr>
                       </thead>
                       <tbody>
@@ -83,7 +82,6 @@ export default function Dashboard() {
                             <td>{proj["Active Project Key"]}</td>
                             <td>{excelDateToJSDate(proj["Last Issue Updated"])}</td>
                             <td>{proj["Active Project Name"]}</td>
-                            <td>{proj.Region}</td>
                           </tr>
                         ))}
                       </tbody>
