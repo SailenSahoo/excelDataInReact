@@ -1,6 +1,13 @@
 import React, { useEffect, useState } from "react";
 import * as XLSX from "xlsx";
 
+function excelDateToJSDate(serial) {
+  const utc_days = Math.floor(serial - 25569);
+  const utc_value = utc_days * 86400; 
+  const date_info = new Date(utc_value * 1000);
+  return date_info.toLocaleDateString();
+}
+
 export default function Dashboard() {
   const [data, setData] = useState([]);
   const [region, setRegion] = useState("NAM");
@@ -27,10 +34,10 @@ export default function Dashboard() {
   }, {});
 
   const getLatestDate = (entries) => {
-    return entries
-      .map((e) => new Date(e["Last Issue Updated"]))
-      .reduce((a, b) => (a > b ? a : b))
-      .toLocaleDateString();
+    const latest = entries
+      .map((e) => e["Last Issue Updated"])
+      .reduce((a, b) => (a > b ? a : b));
+    return excelDateToJSDate(latest);
   };
 
   return (
@@ -74,7 +81,7 @@ export default function Dashboard() {
                         {projects.map((proj, idx) => (
                           <tr key={idx}>
                             <td>{proj["Active Project Key"]}</td>
-                            <td>{proj["Last Issue Updated"]}</td>
+                            <td>{excelDateToJSDate(proj["Last Issue Updated"])}</td>
                             <td>{proj["Active Project Name"]}</td>
                             <td>{proj.Region}</td>
                           </tr>
