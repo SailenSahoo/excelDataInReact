@@ -1,44 +1,95 @@
 import React, { useEffect, useState } from "react";
 import * as XLSX from "xlsx";
 
-// Helper to convert Excel date to readable format
 function excelDateToJSDate(serial) {
-  if (typeof serial === "string") return serial; // Already formatted
+  if (!serial || isNaN(serial)) return "";
   const utc_days = Math.floor(serial - 25569);
   const utc_value = utc_days * 86400;
   const date_info = new Date(utc_value * 1000);
   return date_info.toLocaleDateString();
 }
 
+function downloadExcel(data, filename) {
+  const ws = XLSX.utils.json_to_sheet(data);
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, "Sheet1");
+  XLSX.writeFile(wb, filename);
+}
+
 export default function Dashboard() {
-  const [projectData, setProjectData] = useState([]);
+  const [data, setData] = useState([]);
   const [singleUsers, setSingleUsers] = useState([]);
   const [securityUsers, setSecurityUsers] = useState([]);
+
   const [region, setRegion] = useState("NAM");
+  const [templateFilter, setTemplateFilter] = useState("");
   const [expandedTemplate, setExpandedTemplate] = useState(null);
 
-  useEffect(() => {
-    const fetchExcel = async (path) => {
-      const res = await fetch(path);
-      const buffer = await res.arrayBuffer();
-      const workbook = XLSX.read(buffer, { type: "buffer" });
-      const worksheet = workbook.Sheets[workbook.SheetNames[0]];
-      return XLSX.utils.sheet_to_json(worksheet);
-    };
+  const [singlePage, setSinglePage] = useState(0);
+  const [secPage, setSecPage] = useState(0);
+  const usersPerPage = 10;
 
-    Promise.all([
-      fetchExcel("/data/projects.xlsx"),
-      fetchExcel("/data/single_users.xlsx"),
-      fetchExcel("/data/security_groups.xlsx"),
-    ]).then(([projects, single, security]) => {
-      setProjectData(projects);
-      setSingleUsers(single);
-      setSecurityUsers(security);
-    });
+  useEffect(() => {
+    // Load project data
+    fetch("/data/projects.xlsx")
+      .then((res) => res.arrayBuffer())
+      .then((buffer) => {
+        const workbook = XLSX.read(buffer, { type: "buffer" });
+        const worksheet = workbook.Sheets[workbook.SheetNames[0]];
+        const json = XLSX.utils.sheet_to_json(worksheet);
+        setData(json);
+      });
+
+    // Load single users
+    fetch("/data/single_users.xlsx")
+      .then((res) => res.arrayBuffer())
+      .then((buffer) => {
+        const workbook = XLSX.read(buffer, { type: "buffer" });
+        const worksheet = workbook.Sheets[workbook.SheetNames[0]];
+        const json = XLSX.utils.sheet_to_json(worksheet);
+        setSingleUsers(json);
+      });
+
+    // Load security group users
+    fetch("/data/security_groups.xlsx")
+      .then((res) => res.arrayBuffer())
+      .then((buffer) => {
+        const workbook = XLSX.read(buffer, { type: "buffer" });
+        const worksheet = workbook.Sheets[workbook.SheetNames[0]];
+        const json = XLSX.utils.sheet_to_json(worksheet);
+        setSecurityUsers(json);
+      });
   }, []);
 
-  const filteredProjects = projectData.filter((row) => row.Region === region);
-  const groupedByTemplate = filteredProjects.reduce((acc, row) => {
+  // Filters
+  const filteredData = data.filter(
+    (row) =>
+      row.Region === region &&
+      (templateFilter === "" || row["Template Key"] === templateFilter)
+  );
+
+  const filteredSingleUsers = singleUsers.filter(
+    (user) =>
+      user.Region === region &&
+      (templateFilter === "" || user["TEMPLATE_KEY"] === templateFilter)
+  );
+
+  const filteredSecurityUsers = securityUsers.filter(
+    (user) => user.Region === region
+  );
+
+  const paginatedSingle = filteredSingleUsers.slice(
+    singlePage * usersPerPage,
+    (singlePage + 1) * usersPerPage
+  );
+
+  const paginatedSecurity = filteredSecurityUsers.slice(
+    secPage * usersPerPage,
+    (secPage + 1) * usersPerPage
+  );
+
+  // Group by Template Key
+  const groupedByTemplate = filteredData.reduce((acc, row) => {
     const key = row["Template Key"];
     if (!acc[key]) acc[key] = [];
     acc[key].push(row);
@@ -46,19 +97,18 @@ export default function Dashboard() {
   }, {});
 
   const getLatestDate = (entries) => {
-    const dates = entries.map((e) => e["Last Issue Updated"]);
-    const latest = Math.max(...dates.map((d) => (typeof d === "number" ? d : new Date(d).getTime())));
+    const latest = entries
+      .map((e) => e["Last Issue Updated"])
+      .reduce((a, b) => (a > b ? a : b));
     return excelDateToJSDate(latest);
   };
-
-  const filteredSingleUsers = singleUsers.filter((u) => u.Region === region);
-  const filteredSecurityUsers = securityUsers.filter((u) => u.Region === region);
 
   return (
     <div style={{ padding: "20px", fontFamily: "Arial" }}>
       <h1 style={{ fontSize: "24px", marginBottom: "20px" }}>Project Dashboard</h1>
 
-      <div style={{ marginBottom: "20px" }}>
+      {/* Region Buttons */}
+      <div style={{ marginBottom: "10px" }}>
         <button
           onClick={() => setRegion("NAM")}
           style={{
@@ -86,9 +136,32 @@ export default function Dashboard() {
         </button>
       </div>
 
-      {/* Templates Table */}
-      <h2>Templates</h2>
-      <table border="1" cellPadding="10" cellSpacing="0" style={{ width: "100%", borderCollapse: "collapse" }}>
+      {/* Template Filter */}
+      <div style={{ marginBottom: "20px" }}>
+        <label style={{ marginRight: "10px" }}>Filter by Template:</label>
+        <select
+          value={templateFilter}
+          onChange={(e) => setTemplateFilter(e.target.value)}
+          style={{ padding: "5px" }}
+        >
+          <option value="">All Templates</option>
+          {[...new Set(data.map((row) => row["Template Key"]))]
+            .sort()
+            .map((template) => (
+              <option key={template} value={template}>
+                {template}
+              </option>
+            ))}
+        </select>
+      </div>
+
+      {/* Project Table */}
+      <table
+        border="1"
+        cellPadding="10"
+        cellSpacing="0"
+        style={{ width: "100%", borderCollapse: "collapse" }}
+      >
         <thead>
           <tr style={{ backgroundColor: "#f2f2f2" }}>
             <th>Template Key</th>
@@ -101,7 +174,11 @@ export default function Dashboard() {
             <React.Fragment key={template}>
               <tr
                 style={{ cursor: "pointer", backgroundColor: "#e6f2ff" }}
-                onClick={() => setExpandedTemplate(expandedTemplate === template ? null : template)}
+                onClick={() =>
+                  setExpandedTemplate(
+                    expandedTemplate === template ? null : template
+                  )
+                }
               >
                 <td>{expandedTemplate === template ? "−" : "+"} {template}</td>
                 <td>{getLatestDate(projects)}</td>
@@ -110,7 +187,16 @@ export default function Dashboard() {
               {expandedTemplate === template && (
                 <tr>
                   <td colSpan="3">
-                    <table border="1" cellPadding="8" cellSpacing="0" style={{ width: "100%", marginTop: "10px" }}>
+                    <table
+                      border="1"
+                      cellPadding="8"
+                      cellSpacing="0"
+                      style={{
+                        width: "100%",
+                        borderCollapse: "collapse",
+                        marginTop: "10px",
+                      }}
+                    >
                       <thead>
                         <tr style={{ backgroundColor: "#f9f9f9" }}>
                           <th>Project Key</th>
@@ -136,50 +222,121 @@ export default function Dashboard() {
         </tbody>
       </table>
 
-      {/* Users Section */}
+      {/* Single Users Table */}
       <h2 style={{ marginTop: "40px" }}>Single Users</h2>
-      <table border="1" cellPadding="10" cellSpacing="0" style={{ width: "100%", borderCollapse: "collapse" }}>
-        <thead style={{ backgroundColor: "#f2f2f2" }}>
+      <p>
+        Total Users:{" "}
+        <a
+          href="#"
+          onClick={() =>
+            downloadExcel(filteredSingleUsers, "single_users.xlsx")
+          }
+        >
+          {filteredSingleUsers.length}
+        </a>
+      </p>
+      <table
+        border="1"
+        cellPadding="6"
+        cellSpacing="0"
+        style={{ width: "100%", borderCollapse: "collapse" }}
+      >
+        <thead style={{ backgroundColor: "#f9f9f9" }}>
           <tr>
-            <th>Template Key</th>
+            <th>TEMPLATE_KEY</th>
             <th>User SOE ID</th>
-            <th>LENGTH_SOE_ID</th>
+            <th>Region</th>
           </tr>
         </thead>
         <tbody>
-          {filteredSingleUsers.map((user, idx) => (
+          {paginatedSingle.map((user, idx) => (
             <tr key={idx}>
               <td>{user["TEMPLATE_KEY"]}</td>
               <td>{user["User SOE ID"]}</td>
-              <td>{user["LENGTH_SOE_ID"]}</td>
+              <td>{user.Region}</td>
             </tr>
           ))}
         </tbody>
       </table>
+      <div style={{ marginTop: "10px" }}>
+        <button
+          onClick={() => setSinglePage((p) => Math.max(p - 1, 0))}
+          disabled={singlePage === 0}
+          style={{ marginRight: "5px" }}
+        >
+          Previous
+        </button>
+        <button
+          onClick={() =>
+            setSinglePage((p) =>
+              (p + 1) * usersPerPage < filteredSingleUsers.length ? p + 1 : p
+            )
+          }
+          disabled={(singlePage + 1) * usersPerPage >= filteredSingleUsers.length}
+        >
+          Next
+        </button>
+      </div>
 
+      {/* Security Group Users Table */}
       <h2 style={{ marginTop: "40px" }}>Security Group Users</h2>
-      <table border="1" cellPadding="10" cellSpacing="0" style={{ width: "100%", borderCollapse: "collapse" }}>
-        <thead style={{ backgroundColor: "#f2f2f2" }}>
+      <p>
+        Total Users:{" "}
+        <a
+          href="#"
+          onClick={() =>
+            downloadExcel(filteredSecurityUsers, "security_group_users.xlsx")
+          }
+        >
+          {filteredSecurityUsers.length}
+        </a>
+      </p>
+      <table
+        border="1"
+        cellPadding="6"
+        cellSpacing="0"
+        style={{ width: "100%", borderCollapse: "collapse" }}
+      >
+        <thead style={{ backgroundColor: "#f9f9f9" }}>
           <tr>
-            <th>User Name</th>
-            <th>Display Name</th>
-            <th>Email</th>
-            <th>Group Name</th>
-            <th>LENGTH_SOE_ID</th>
+            <th>USER_NAME</th>
+            <th>DISPLAY_NAME</th>
+            <th>EMAIL_ADDRESS</th>
+            <th>GROUP_NAME</th>
+            <th>Region</th>
           </tr>
         </thead>
         <tbody>
-          {filteredSecurityUsers.map((user, idx) => (
+          {paginatedSecurity.map((user, idx) => (
             <tr key={idx}>
               <td>{user["USER_NAME"]}</td>
               <td>{user["DISPLAY_NAME"]}</td>
               <td>{user["EMAIL_ADDRESS"]}</td>
               <td>{user["GROUP_NAME"]}</td>
-              <td>{user["LENGTH_SOE_ID"]}</td>
+              <td>{user.Region}</td>
             </tr>
           ))}
         </tbody>
       </table>
+      <div style={{ marginTop: "10px" }}>
+        <button
+          onClick={() => setSecPage((p) => Math.max(p - 1, 0))}
+          disabled={secPage === 0}
+          style={{ marginRight: "5px" }}
+        >
+          Previous
+        </button>
+        <button
+          onClick={() =>
+            setSecPage((p) =>
+              (p + 1) * usersPerPage < filteredSecurityUsers.length ? p + 1 : p
+            )
+          }
+          disabled={(secPage + 1) * usersPerPage >= filteredSecurityUsers.length}
+        >
+          Next
+        </button>
+      </div>
     </div>
   );
 }
