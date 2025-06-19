@@ -1,0 +1,341 @@
+import React, { useEffect, useState } from "react";
+import * as XLSX from "xlsx";
+
+// Converts Excel serial date to readable format
+function excelDateToJSDate(serial) {
+  if (!serial || isNaN(serial)) return "";
+  const utc_days = Math.floor(serial - 25569);
+  const utc_value = utc_days * 86400;
+  const date_info = new Date(utc_value * 1000);
+  return date_info.toLocaleDateString();
+}
+
+// Export helper
+function downloadExcel(data, filename) {
+  const ws = XLSX.utils.json_to_sheet(data);
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, "Sheet1");
+  XLSX.writeFile(wb, filename);
+}
+
+export default function Dashboard() {
+  const [data, setData] = useState([]);
+  const [singleUsers, setSingleUsers] = useState([]);
+  const [securityUsers, setSecurityUsers] = useState([]);
+  const [region, setRegion] = useState("NAM");
+  const [templateFilter, setTemplateFilter] = useState("");
+  const [expandedTemplate, setExpandedTemplate] = useState(null);
+  const [expandedPage, setExpandedPage] = useState(0);
+  const [singlePage, setSinglePage] = useState(0);
+  const [secPage, setSecPage] = useState(0);
+  const [singleUserFilters, setSingleUserFilters] = useState({});
+  const usersPerPage = 10;
+
+  useEffect(() => {
+    fetch("/data/projects.xlsx")
+      .then((res) => res.arrayBuffer())
+      .then((buffer) => {
+        const workbook = XLSX.read(buffer, { type: "buffer" });
+        const worksheet = workbook.Sheets[workbook.SheetNames[0]];
+        const json = XLSX.utils.sheet_to_json(worksheet);
+        setData(json);
+      });
+
+    fetch("/data/single_users.xlsx")
+      .then((res) => res.arrayBuffer())
+      .then((buffer) => {
+        const workbook = XLSX.read(buffer, { type: "buffer" });
+        const worksheet = workbook.Sheets[workbook.SheetNames[0]];
+        const json = XLSX.utils.sheet_to_json(worksheet);
+        setSingleUsers(json);
+      });
+
+    fetch("/data/security_groups.xlsx")
+      .then((res) => res.arrayBuffer())
+      .then((buffer) => {
+        const workbook = XLSX.read(buffer, { type: "buffer" });
+        const worksheet = workbook.Sheets[workbook.SheetNames[0]];
+        const json = XLSX.utils.sheet_to_json(worksheet);
+        setSecurityUsers(json);
+      });
+  }, []);
+
+  // Filtered data
+  const filteredData = data.filter(
+    (row) =>
+      row.Region === region &&
+      (templateFilter === "" || row["Template Key"] === templateFilter)
+  );
+
+  const groupedByTemplate = filteredData.reduce((acc, row) => {
+    const key = row["Template Key"];
+    if (!acc[key]) acc[key] = [];
+    acc[key].push(row);
+    return acc;
+  }, {});
+
+  const getLatestDate = (entries) => {
+    const latest = entries
+      .map((e) => e["Last Issue Updated"])
+      .reduce((a, b) => (a > b ? a : b));
+    return excelDateToJSDate(latest);
+  };
+
+  // Expanded table pagination
+  const expandedProjects =
+    expandedTemplate && groupedByTemplate[expandedTemplate]
+      ? groupedByTemplate[expandedTemplate]
+      : [];
+  const paginatedExpanded = expandedProjects.slice(
+    expandedPage * usersPerPage,
+    (expandedPage + 1) * usersPerPage
+  );
+
+  const exportExpandedProjects = () => {
+    downloadExcel(expandedProjects, `${expandedTemplate}_projects.xlsx`);
+  };
+
+  // Single Users Filtering
+  const filteredSingleUsers = singleUsers
+    .filter((user) => user.Region === region)
+    .filter((user) =>
+      Object.entries(singleUserFilters).every(([key, value]) => {
+        if (key === "TEMPLATE_KEY") return true; // Skip filter
+        return (user[key] || "").toString().toLowerCase().includes(value.toLowerCase());
+      })
+    )
+    .filter(
+      (user) =>
+        templateFilter === "" || user["TEMPLATE_KEY"] === templateFilter
+    );
+
+  const paginatedSingle = filteredSingleUsers.slice(
+    singlePage * usersPerPage,
+    (singlePage + 1) * usersPerPage
+  );
+
+  const filteredSecurityUsers = securityUsers.filter(
+    (user) => user.Region === region
+  );
+  const paginatedSecurity = filteredSecurityUsers.slice(
+    secPage * usersPerPage,
+    (secPage + 1) * usersPerPage
+  );
+
+  const handleFilterChange = (key, value) => {
+    setSingleUserFilters((prev) => ({ ...prev, [key]: value }));
+    setSinglePage(0);
+  };
+
+  return (
+    <div style={{ padding: "20px", fontFamily: "Arial" }}>
+      <h1>Project Dashboard</h1>
+
+      {/* Region Buttons */}
+      <div style={{ marginBottom: "10px" }}>
+        {["NAM", "APAC"].map((reg) => (
+          <button
+            key={reg}
+            onClick={() => setRegion(reg)}
+            style={{
+              marginRight: "10px",
+              padding: "5px 10px",
+              backgroundColor: region === reg ? "#007BFF" : "#ccc",
+              color: "white",
+              border: "none",
+              cursor: "pointer",
+            }}
+          >
+            {reg}
+          </button>
+        ))}
+      </div>
+
+      {/* Template Filter */}
+      <div style={{ marginBottom: "20px" }}>
+        <label style={{ marginRight: "10px" }}>Filter by Template:</label>
+        <select
+          value={templateFilter}
+          onChange={(e) => setTemplateFilter(e.target.value)}
+          style={{ padding: "5px" }}
+        >
+          <option value="">All Templates</option>
+          {[...new Set(data.map((row) => row["Template Key"]))]
+            .sort()
+            .map((template) => (
+              <option key={template} value={template}>
+                {template}
+              </option>
+            ))}
+        </select>
+      </div>
+
+      {/* Project Table */}
+      <table border="1" cellPadding="10" cellSpacing="0" style={{ width: "100%", borderCollapse: "collapse" }}>
+        <thead>
+          <tr style={{ backgroundColor: "#f2f2f2" }}>
+            <th>Template Key</th>
+            <th>Latest Issue Updated</th>
+            <th>Active Project Count</th>
+          </tr>
+        </thead>
+        <tbody>
+          {Object.entries(groupedByTemplate).map(([template, projects]) => (
+            <React.Fragment key={template}>
+              <tr
+                style={{ cursor: "pointer", backgroundColor: "#e6f2ff" }}
+                onClick={() => {
+                  setExpandedTemplate(expandedTemplate === template ? null : template);
+                  setExpandedPage(0);
+                }}
+              >
+                <td>{expandedTemplate === template ? "−" : "+"} {template}</td>
+                <td>{getLatestDate(projects)}</td>
+                <td>{projects.length}</td>
+              </tr>
+              {expandedTemplate === template && (
+                <tr>
+                  <td colSpan="3">
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: "10px" }}>
+                      <strong>Project Details:</strong>
+                      <button onClick={exportExpandedProjects}>Export</button>
+                    </div>
+                    <table border="1" cellPadding="8" cellSpacing="0" style={{ width: "100%", borderCollapse: "collapse", marginTop: "10px" }}>
+                      <thead style={{ backgroundColor: "#f9f9f9" }}>
+                        <tr>
+                          <th>Project Key</th>
+                          <th>Last Issue Updated</th>
+                          <th>Project Name</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {paginatedExpanded.map((proj, idx) => (
+                          <tr key={idx}>
+                            <td>{proj["Active Project Key"]}</td>
+                            <td>{excelDateToJSDate(proj["Last Issue Updated"])}</td>
+                            <td>{proj["Active Project Name"]}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                    <div style={{ marginTop: "10px" }}>
+                      <button onClick={() => setExpandedPage((p) => Math.max(p - 1, 0))} disabled={expandedPage === 0}>Previous</button>
+                      <button
+                        onClick={() =>
+                          setExpandedPage((p) =>
+                            (p + 1) * usersPerPage < expandedProjects.length ? p + 1 : p
+                          )
+                        }
+                        disabled={(expandedPage + 1) * usersPerPage >= expandedProjects.length}
+                      >
+                        Next
+                      </button>
+                    </div>
+                  </td>
+                </tr>
+              )}
+            </React.Fragment>
+          ))}
+        </tbody>
+      </table>
+
+      {/* Single Users Table */}
+      <h2 style={{ marginTop: "40px" }}>Single Users</h2>
+      <p>
+        Total Users:{" "}
+        <a href="#" onClick={() => downloadExcel(filteredSingleUsers, "single_users.xlsx")}>
+          {filteredSingleUsers.length}
+        </a>
+      </p>
+      <table border="1" cellPadding="6" cellSpacing="0" style={{ width: "100%", borderCollapse: "collapse" }}>
+        <thead style={{ backgroundColor: "#f9f9f9" }}>
+          <tr>
+            {["TEMPLATE_KEY", "PROJECT_KEY", "User SOE ID", "Region", "DISPLAY_NAME", "EMAIL_ADDRESS"].map((header) => (
+              <th key={header}>
+                {header}
+                {header !== "TEMPLATE_KEY" && (
+                  <>
+                    <br />
+                    <input
+                      style={{ width: "90%" }}
+                      value={singleUserFilters[header] || ""}
+                      onChange={(e) => handleFilterChange(header, e.target.value)}
+                      placeholder="Filter"
+                    />
+                  </>
+                )}
+              </th>
+            ))}
+          </tr>
+        </thead>
+        <tbody>
+          {paginatedSingle.map((user, idx) => (
+            <tr key={idx}>
+              <td>{user["TEMPLATE_KEY"]}</td>
+              <td>{user["PROJECT_KEY"]}</td>
+              <td>{user["User SOE ID"]}</td>
+              <td>{user["Region"]}</td>
+              <td>{user["DISPLAY_NAME"]}</td>
+              <td>{user["EMAIL_ADDRESS"]}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+      <div style={{ marginTop: "10px" }}>
+        <button onClick={() => setSinglePage((p) => Math.max(p - 1, 0))} disabled={singlePage === 0}>Previous</button>
+        <button
+          onClick={() => setSinglePage((p) =>
+            (p + 1) * usersPerPage < filteredSingleUsers.length ? p + 1 : p
+          )}
+          disabled={(singlePage + 1) * usersPerPage >= filteredSingleUsers.length}
+        >
+          Next
+        </button>
+      </div>
+
+      {/* Security Group Users Table */}
+      <h2 style={{ marginTop: "40px" }}>Security Group Users</h2>
+      <p>
+        Total Users:{" "}
+        <a href="#" onClick={() => downloadExcel(filteredSecurityUsers, "security_group_users.xlsx")}>
+          {filteredSecurityUsers.length}
+        </a>
+      </p>
+      <table border="1" cellPadding="6" cellSpacing="0" style={{ width: "100%", borderCollapse: "collapse" }}>
+        <thead style={{ backgroundColor: "#f9f9f9" }}>
+          <tr>
+            <th>USER_NAME</th>
+            <th>DISPLAY_NAME</th>
+            <th>EMAIL_ADDRESS</th>
+            <th>GROUP_NAME</th>
+            <th>Region</th>
+          </tr>
+        </thead>
+        <tbody>
+          {paginatedSecurity.map((user, idx) => (
+            <tr key={idx}>
+              <td>{user["USER_NAME"]}</td>
+              <td>{user["DISPLAY_NAME"]}</td>
+              <td>{user["EMAIL_ADDRESS"]}</td>
+              <td>{user["GROUP_NAME"]}</td>
+              <td>{user["Region"]}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+      <div style={{ marginTop: "10px" }}>
+        <button onClick={() => setSecPage((p) => Math.max(p - 1, 0))} disabled={secPage === 0}>Previous</button>
+        <button
+          onClick={() =>
+            setSecPage((p) =>
+              (p + 1) * usersPerPage < filteredSecurityUsers.length ? p + 1 : p
+            )
+          }
+          disabled={(secPage + 1) * usersPerPage >= filteredSecurityUsers.length}
+        >
+          Next
+        </button>
+      </div>
+    </div>
+  );
+}
